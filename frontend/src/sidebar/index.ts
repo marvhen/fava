@@ -11,8 +11,14 @@ import HeaderAndAside from "./HeaderAndAside.svelte";
 import { page_title } from "./page-title";
 
 export function initSidebar(): void {
-  page_title.subscribe(({ title }) => {
-    document.title = `${title} - ${store_get(ledger_title)}`;
+
+  // Marvin 8/19/2025 - make the page title show the beancount title only for brevity
+  // page_title.subscribe(({ title }) => {
+  //   document.title = `${title} - ${store_get(ledger_title)}`;
+  // });
+
+  page_title.subscribe(() => {
+    document.title = store_get(ledger_title);
   });
 
   mount(HeaderAndAside, {
