@@ -64,7 +64,7 @@
     <li class="{{ type }} {{ entry.type or '' }} {{ entry.flag|flag_to_type if entry.flag else '' }}{{ ' linked' if entry.tags and 'linked' in entry.tags else '' }}{{ ' discovered' if entry.tags and 'discovered' in entry.tags else '' }}">
         <p>
         <span class="datecell" data-sort-value={{ loop.index }}><a href="#context-{{ entry_hash }}">{{ entry.date }}</a></span>
-        <span class="flag">{% if type == 'transaction' %}{{ entry.flag }}{% else %}{{ short_type.get(type, type[:3]) }}{% endif %}</span>
+        <span class="flag">{% if type == 'transaction' %}{{ entry.flag }}{% elif type == 'custom' %}{{ entry.type }}{% else %}{{ short_type.get(type, type[:3]) }}{% endif %}</span>
         <span class="description{% if type != 'transaction' %}"{% else %} droptarget" data-entry="{{ entry_hash }}" data-entry-date="{{ entry.date }}" data-account-name="{{ entry.postings[0].account if entry.postings else "" }}"{% endif %}>
         {% if type == 'open' or type == 'close' %}
             {{ account_link(entry.account) }}
@@ -75,14 +75,22 @@
         {% elif type == 'pad' %}
             {{ account_link(entry.account) }}&nbsp;from&nbsp;{{ account_link(entry.source_account) }}
         {% elif type == 'custom' %}
-          <strong>{{ entry.type }}</strong>
-          {%- for value in entry['values'] -%}
-            &nbsp;{% if value.dtype|string == "<AccountDummy>" %}{{ account_link(value.value) }}
-            {%- elif value.dtype|string == "<class 'beancount.core.amount.Amount'>" %}{{ commodity_macros.render_amount(ledger, value.value) }}
-            {%- elif value.dtype|string == "<class 'str'>" %}"{{ value.value }}"
-            {%- elif value.dtype|string == "<class 'bool'>" %}{{ value.value }}
-            {%- elif value.dtype|string == "<class 'datetime.date'>" %}{{ value.value }}{% endif -%}
-          {%- endfor -%}
+          {% if entry.type == 'Bxp' %}
+            <strong>{{ entry['values'][0].value }}</strong>
+            {% if entry.values[3].value %}
+              <span class="spacer"></span>
+              accumulated <span class="num">{{ entry.values[2].value.number|format_currency(entry.values[3].value.currency, show_if_zero=True) }} {{ entry.values[3].value.currency }}</span>
+            {% endif %}
+          {% else %}
+            <strong>{{ entry.type }}</strong>
+            {%- for value in entry['values'] -%}
+              &nbsp;{% if value.dtype|string == "<AccountDummy>" %}{{ account_link(value.value) }}
+              {%- elif value.dtype|string == "<class 'beancount.core.amount.Amount'>" %}{{ commodity_macros.render_amount(ledger, value.value) }}
+              {%- elif value.dtype|string == "<class 'str'>" %}"{{ value.value }}"
+              {%- elif value.dtype|string == "<class 'bool'>" %}{{ value.value }}
+              {%- elif value.dtype|string == "<class 'datetime.date'>" %}{{ value.value }}{% endif -%}
+            {%- endfor -%}
+          {% endif %}
         {% elif type == 'document' %}
             {{ account_link(entry.account) }}
             <a class="filename" data-remote target=_blank href="{{ url_for('document', filename=entry.filename) }}">{{ entry.filename|basename }}</a>
@@ -117,6 +125,18 @@
             {% if not show_change_and_balance %}
               <span class="change num"></span>
             {% endif %}
+        {% elif type == 'custom' %}
+          {% if entry.type == 'Bxp' %}
+            {{ commodity_macros.render_amount(ledger,  entry['values'][1].value,        'num bal' + (' pending' if entry['values'][3].value else '')) }}
+            {% if entry['values'][3].value %}
+              <span class="change num bal pending">
+              {{ commodity_macros.render_num(ledger, entry['values'][3].value.currency, entry['values'][3].value.number) }}
+              </span>
+            {% else %}
+              <span class="change num"></span>
+            {% endif %}
+            <span class="change num"></span>
+          {% endif %}
         {% endif %}
         {% if show_change_and_balance %}
           {% if type == 'transaction' %}
