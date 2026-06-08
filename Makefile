@@ -15,8 +15,11 @@ frontend/node_modules: frontend/package-lock.json
 .PHONY: dev
 dev: .venv
 .venv: constraints.txt requirements.txt pyproject.toml
-	uv venv --allow-existing
+# marvhen modified 6/7/2026 to ensure python 3.13 is used for the dev environment
+	uv venv --allow-existing --python 3.13 
 	uv pip sync requirements.txt
+# marvhen modified 6/7/2026 to ensure pip is found in .venv
+	uv pip install --python .venv pip
 	touch -m .venv
 
 # Remove the generated frontend and translations in addition to mostlyclean (see below).
