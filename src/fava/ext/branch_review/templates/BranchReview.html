@@ -9,10 +9,11 @@
   .br-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: nowrap; padding: 10px; cursor: pointer; }
   @media (hover: hover) and (pointer: fine) {
     .br-head:hover { background: #f0f0f0; }
+    .br-state-label { display: inline; }
   }
-  .br-title { font-size: 16px; font-weight: bold; }
+  .br-title { font-size: 16px; font-weight: bold; flex: none; }
   .br-meta { color: #666; font-size: 13px; }
-  .br-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: default; }
+  .br-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: default; flex: 1 1 auto; min-width: 0; }
   .br-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.5s ease; }
   .br-body-inner { overflow: hidden; min-height: 0; }
   .br-card.br-collapsed .br-body { grid-template-rows: 0fr; }
@@ -32,8 +33,9 @@
   .br-doc img { display: block; max-width: 100%; border: none; }
   .br-docname { font-size: 13px; word-break: break-all; margin: 0 10px; }
   .br-card.br-needs .br-head { background: #f8d7da; }
-  .br-status-group { display: flex; }
-  .br-state-btn { padding: 4px 12px; font-size: 17px; cursor: pointer; border: 1px solid rgba(0, 0, 0, 0.25); color: inherit; }
+  .br-status-group { display: flex; width: 100%; }
+  .br-state-label { display: none; margin-left: 6px; font-size: 14px; }
+  .br-state-btn { padding: 4px 12px; font-size: 17px; cursor: pointer; border: 1px solid rgba(0, 0, 0, 0.25); color: inherit; flex: 1 1 0; }
   .br-state-btn:first-child { border-radius: 4px 0 0 4px; }
   .br-state-btn:last-child { border-radius: 0 4px 4px 0; }
   .br-state-btn:not(:first-child) { border-left: none; }
@@ -73,9 +75,9 @@
     <div class="br-title">{{ loop.index }}. {{ item.kind }} in {{ item.book }}</div>
     <div class="br-controls">
       <div class="br-status-group">
-        <button type="button" class="br-state-btn" data-state="none" title="Unchecked" aria-label="Unchecked"><span class="br-emoji">⚪&#xFE0E;</span></button>
-        <button type="button" class="br-state-btn" data-state="needs-work" title="Needs Work" aria-label="Needs Work"><span class="br-emoji">❌&#xFE0E;</span></button>
-        <button type="button" class="br-state-btn" data-state="approved" title="Approved" aria-label="Approved"><span class="br-emoji">✔</span></button>
+        <button type="button" class="br-state-btn" data-state="none" title="Unchecked" aria-label="Unchecked"><span class="br-emoji">⚪&#xFE0E;</span><span class="br-state-label">Unchecked</span></button>
+        <button type="button" class="br-state-btn" data-state="needs-work" title="Needs Work" aria-label="Needs Work"><span class="br-emoji">❌&#xFE0E;</span><span class="br-state-label">Needs Work</span></button>
+        <button type="button" class="br-state-btn" data-state="approved" title="Approved" aria-label="Approved"><span class="br-emoji">✔</span><span class="br-state-label">Approved</span></button>
         <!-- ✅&#xFE0E; -->
       </div>
     </div>
