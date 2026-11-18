@@ -4,7 +4,13 @@ Lists the transactions that a git branch changes relative to ``origin/main``
 in the ledger's beancount repository, shows each transaction's source
 documents inline, and lets the user approve or comment on each one.
 Review state (approvals and comments) is stored as JSON outside the
-repository, in ``~/.branch-review/<branch>.json``.
+repository, in ``~/.branch-review/<branch>.json``. Per-item notes
+written by Muse (a link to where the receipt can be fetched, and
+questions that should not clutter the transaction text) live in a
+sibling file, ``~/.branch-review/<branch>.annotations.json``, keyed
+by item key. When the repository has a ``gitea-push`` remote, the
+branch's pull-request number is looked up through the Gitea API so
+the page can link straight to the PR.
 
 Enable in a beancount file with::
 
@@ -23,6 +29,8 @@ import hashlib
 import json
 import re
 import subprocess
+import time
+import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -259,13 +267,106 @@ class BranchReview(FavaExtensionBase):
         branches = self.branches()
         branch = self.pick_branch(requested)
         if branch is None:
-            return {"branches": branches, "branch": None, "items": [], "head": ""}
+            return {
+                "branches": branches,
+                "branch": None,
+                "items": [],
+                "head": "",
+                "pr": None,
+                "branch_prs": {},
+            }
+        items = self.review_items(branch)
+        annotations = self._load_annotations(branch)
+        for item in items:
+            note = annotations.get(item["key"], {})
+            item["receipt_url"] = note.get("receipt_url", "")
+            item["receipt_label"] = note.get("receipt_label", "")
+            item["questions"] = note.get("questions", "")
+        prs = self.pr_map()
+        number = prs.get(branch)
         return {
             "branches": branches,
             "branch": branch,
             "head": self._git("rev-parse", "--short", branch).strip(),
-            "items": self.review_items(branch),
+            "items": items,
+            "branch_prs": prs,
+            "pr": (
+                {"number": number, "url": self._pr_url(number)}
+                if number
+                else None
+            ),
         }
+
+    # ------------------------------------------------------------------
+    # annotations (receipt links and questions), stored outside the repo
+    # ------------------------------------------------------------------
+    def _annotations_file(self, branch: str) -> Path:
+        folder = Path.home() / ".branch-review"
+        folder.mkdir(exist_ok=True)
+        return folder / (branch.replace("/", "_") + ".annotations.json")
+
+    def _load_annotations(self, branch: str) -> dict[str, Any]:
+        """Per-item notes written by Muse: receipt links and questions.
+
+        Kept apart from the review state file, which the page itself
+        writes, so the two never overwrite each other.
+        """
+        ann_file = self._annotations_file(branch)
+        if ann_file.exists():
+            try:
+                data = json.loads(ann_file.read_text())
+                if isinstance(data, dict):
+                    return data
+            except (ValueError, OSError):
+                pass
+        return {}
+
+    # ------------------------------------------------------------------
+    # Gitea pull requests, so each branch can link to its PR
+    # ------------------------------------------------------------------
+    def _gitea(self) -> tuple[str, str, str] | None:
+        """(base url, owner/repo, token) parsed from the push remote."""
+        url = self._git("remote", "get-url", "gitea-push").strip()
+        match = re.match(
+            r"^(https?://)(?:[^:@/]+:)?([^:@/]+)@([^/]+)/(.+?)(?:\.git)?$",
+            url,
+        )
+        if not match:
+            return None
+        scheme, token, host, repo = match.groups()
+        return f"{scheme}{host}", repo, token
+
+    def pr_map(self) -> dict[str, int]:
+        """Branch name -> PR number, from the Gitea API (cached 2 min)."""
+        cache = getattr(self, "_pr_cache", None)
+        now = time.time()
+        if cache and now - cache["when"] < 120:
+            return cache["map"]
+        mapping: dict[str, int] = {}
+        gitea = self._gitea()
+        if gitea:
+            base, repo, token = gitea
+            try:
+                req = urllib.request.Request(
+                    f"{base}/api/v1/repos/{repo}/pulls?state=all&limit=50",
+                    headers={"Authorization": f"token {token}"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    for pull in json.loads(resp.read()):
+                        ref = pull.get("head", {}).get("ref", "")
+                        if ref and ref not in mapping:
+                            mapping[ref] = int(pull["number"])
+            except Exception:  # noqa: BLE001 - the link is a convenience
+                mapping = {}
+        self._pr_cache = {"when": now, "map": mapping}
+        return mapping
+
+    def _pr_url(self, number: int) -> str:
+        gitea = self._gitea()
+        if not gitea:
+            return ""
+        base, repo, _ = gitea
+        return f"{base}/{repo}/pulls/{number}"
 
     # ------------------------------------------------------------------
     # review state (approvals and comments), stored outside the repo

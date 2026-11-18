@@ -21,6 +21,10 @@
   .br-card pre { overflow-x: auto; scrollbar-width: none; }
   .br-card pre::-webkit-scrollbar { display: none; }
   .br-q { color: #b58900; font-weight: bold; }
+  .br-notes { margin: 0 10px 10px; padding: 8px 10px; background: #fff7e0; border: 1px solid #e3cf8a; border-radius: 6px; font-size: 14px; }
+  .br-questions { white-space: pre-line; }
+  .br-receipt { margin-top: 6px; }
+  .br-notes .br-receipt:first-child { margin-top: 0; }
   .br-doc { margin: 6px 0 0; }
   .br-doc embed { display: block; width: 100%; height: 480px; border: none; }
   .br-doc img { display: block; max-width: 100%; border: none; }
@@ -51,11 +55,14 @@
   <label for="br-branch-select">Branch:</label>
   <select id="br-branch-select" name="branch" onchange="this.form.submit()">
     {% for b in data["branches"] %}
-    <option value="{{ b }}" {% if b == data["branch"] %}selected{% endif %}>{{ b }}</option>
+    <option value="{{ b }}" {% if b == data["branch"] %}selected{% endif %}>{{ b }}{% if data["branch_prs"].get(b) %} (PR #{{ data["branch_prs"][b] }}){% endif %}</option>
     {% endfor %}
   </select>
   <span class="br-meta">head {{ data["head"] }} · {{ data["items"]|length }} changed transaction(s) vs origin/main</span>
 </form>
+{% if data["pr"] %}
+<p class="br-meta"><a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR #{{ data['pr']['number'] }} on Gitea</a></p>
+{% endif %}
 
 
 {% for item in data["items"] %}
@@ -74,6 +81,16 @@
   <textarea class="br-comment" id="br-comment-{{ loop.index }}" rows="1" placeholder="Comment on this transaction (optional)"></textarea>
   <div class="br-body">
    <div class="br-body-inner">
+    {% if item.questions or item.receipt_url %}
+    <div class="br-notes">
+      {% if item.questions %}
+      <div class="br-questions"><strong>Questions from Claude</strong><br>{{ item.questions }}</div>
+      {% endif %}
+      {% if item.receipt_url %}
+      <div class="br-receipt">Get the receipt: <a class="br-doclink" href="{{ item.receipt_url }}" target="_blank" rel="noopener">{{ item.receipt_label or item.receipt_url }}</a></div>
+      {% endif %}
+    </div>
+    {% endif %}
     <pre>{{ item.html }}</pre>
     {% for doc in item.docs %}
     <div class="br-doc">
