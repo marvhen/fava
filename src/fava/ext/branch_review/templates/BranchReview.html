@@ -21,6 +21,8 @@
   .br-card pre { overflow-x: auto; scrollbar-width: none; }
   .br-card pre::-webkit-scrollbar { display: none; }
   .br-q { color: #b58900; font-weight: bold; }
+  #br-branch-select { max-width: calc(100vw - 100px); }
+  .br-prline { text-align: right; margin: 2px 0 0; }
   .br-notes { margin: 0 10px 10px; padding: 8px 10px; background: #fff7e0; border: 1px solid #e3cf8a; border-radius: 6px; font-size: 14px; }
   .br-questions { white-space: pre-line; }
   .br-receipt { margin-top: 6px; }
@@ -61,7 +63,7 @@
   <span class="br-meta">head {{ data["head"] }} · {{ data["items"]|length }} changed transaction(s) vs origin/main</span>
 </form>
 {% if data["pr"] %}
-<p class="br-meta"><a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR #{{ data['pr']['number'] }} on Gitea</a></p>
+<p class="br-prline"><a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR{{ data['pr']['number'] }}</a></p>
 {% endif %}
 
 
@@ -84,10 +86,10 @@
     {% if item.questions or item.receipt_url %}
     <div class="br-notes">
       {% if item.questions %}
-      <div class="br-questions"><strong>Questions from Claude</strong><br>{{ item.questions }}</div>
+      <div class="br-questions"><strong>Questions</strong><br>{{ item.questions }}</div>
       {% endif %}
       {% if item.receipt_url %}
-      <div class="br-receipt">Get the receipt: <a class="br-doclink" href="{{ item.receipt_url }}" target="_blank" rel="noopener">{{ item.receipt_label or item.receipt_url }}</a></div>
+      <div class="br-receipt"><a class="br-doclink" href="{{ item.receipt_url }}" target="_blank" rel="noopener">Get the receipt</a></div>
       {% endif %}
     </div>
     {% endif %}
