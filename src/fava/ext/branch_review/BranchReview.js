@@ -170,19 +170,18 @@ export default {
     // expand-then-collapse shuffle on page load.
 
     // "Submit to Muse": snapshot the review for Muse to process.
+    // The button label itself carries the submitted time (24h); it
+    // returns to plain "Submit to Muse" once Muse has picked the
+    // submission up, because the pending snapshot is then gone.
     const submitBtn = document.getElementById("br-submit");
-    const submitStatus = document.getElementById("br-submit-status");
     submitBtn?.addEventListener("click", () => {
       if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
       void ctx.api.post("submit", { branch }).then((res) => {
         if (submitBtn instanceof HTMLButtonElement) {
           submitBtn.disabled = false;
-        }
-        if (submitStatus) {
-          submitStatus.textContent =
-            res && res.ok
-              ? `Submitted ${res.submitted_at} — Muse will pick it up shortly`
-              : "Submit failed — try again";
+          if (res && res.ok) {
+            submitBtn.textContent = `Submit to Muse (submitted ${String(res.submitted_at).slice(11, 19)})`;
+          }
         }
       });
     });

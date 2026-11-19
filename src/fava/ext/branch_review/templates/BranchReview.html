@@ -22,7 +22,7 @@
   .br-card pre::-webkit-scrollbar { display: none; }
   .br-q { color: #b58900; font-weight: bold; }
   #br-branch-select { max-width: calc(100vw - 100px); }
-  .br-prline { text-align: right; margin: 2px 0 0; }
+  .br-topline { display: flex; justify-content: space-between; align-items: center; margin: 6px 0 0; }
   .br-notes { margin: 0 10px 10px; padding: 8px 10px; background: #fff7e0; border: 1px solid #e3cf8a; border-radius: 6px; font-size: 14px; }
   .br-questions { white-space: pre-line; }
   .br-receipt { margin-top: 6px; text-align: right; }
@@ -49,7 +49,6 @@
   .br-state-btn.br-active[data-state="approved"] { background: springgreen; }
   .br-emoji { filter: saturate(1.5) brightness(1.1); }
   .br-comment { display: block; width: calc(100% - 16px); box-sizing: border-box; margin: 8px; resize: vertical; }
-  .br-submitline { text-align: right; margin: 6px 0 0; }
   #br-submit { padding: 6px 14px; font-size: 15px; cursor: pointer; }
   .br-settings-body { display: grid; gap: 8px; margin: 0 10px 10px; }
   .br-settings-body label { display: flex; align-items: center; gap: 8px; }
@@ -68,13 +67,12 @@
   </select>
   <span class="br-meta">head {{ data["head"] }} · {{ data["items"]|length }} changed transaction(s) vs origin/main</span>
 </form>
-{% if data["pr"] %}
-<p class="br-prline"><a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR{{ data['pr']['number'] }}</a></p>
-{% endif %}
-<p class="br-submitline">
-  <button type="button" id="br-submit">Submit to Muse</button>
-  <span id="br-submit-status" class="br-meta">{% if data["submission"] %}Submitted {{ data["submission"]["submitted_at"] }} — waiting for Muse to pick it up{% endif %}</span>
-</p>
+<div class="br-topline">
+  <button type="button" id="br-submit">Submit to Muse{% if data["submission"] %} (submitted {{ data["submission"]["submitted_at"][11:19] }}){% endif %}</button>
+  {% if data["pr"] %}
+  <a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR{{ data['pr']['number'] }}</a>
+  {% endif %}
+</div>
 
 
 {% for item in data["items"] %}
