@@ -10,7 +10,7 @@
   @media (hover: hover) and (pointer: fine) {
     .br-head:hover { background: #f0f0f0; }
   }
-  .br-title { font-size: 16px; font-weight: bold; flex: none; }
+  .br-title { font-size: 16px; font-weight: bold; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .br-meta { color: #666; font-size: 13px; }
   .br-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: default; flex: 1 1 auto; min-width: 0; }
   .br-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.5s ease; }
@@ -65,7 +65,7 @@
     <option value="{{ b }}" {% if b == data["branch"] %}selected{% endif %}>{{ b }}{% if data["branch_prs"].get(b) %} (PR #{{ data["branch_prs"][b] }}){% endif %}</option>
     {% endfor %}
   </select>
-  <span class="br-meta">head {{ data["head"] }} · {{ data["items"]|length }} changed transaction(s) vs origin/main</span>
+  <span class="br-meta">head {{ data["head"] }} · {{ data["items"]|length }} changed item(s) vs origin/main</span>
 </form>
 <div class="br-topline">
   <button type="button" id="br-submit">Submit to Muse{% if data["submission"] %} (submitted {{ data["submission"]["submitted_at"][11:19] }}){% endif %}</button>
@@ -101,7 +101,7 @@
       {% endif %}
     </div>
     {% endif %}
-    <pre>{{ item.html }}</pre>
+    {% if item.html %}<pre>{{ item.html }}</pre>{% endif %}
     {% for doc in item.docs %}
     <div class="br-doc">
       <div class="br-docname"><a class="br-doclink" href="doc?branch={{ data["branch"] }}&path={{ doc.path|urlencode }}" target="_blank" rel="noopener">{{ doc.name }}</a></div>
@@ -112,6 +112,11 @@
       {% endif %}
     </div>
     {% endfor %}
+    {% if item.get("file_url") %}
+    <div class="br-doc">
+      <div class="br-docname"><a class="br-doclink" href="{{ item.get("file_url") }}" target="_blank" rel="noopener">{{ item.book }}</a></div>
+    </div>
+    {% endif %}
    </div>
   </div>
 </article>

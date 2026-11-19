@@ -1,8 +1,11 @@
 """Branch review extension for Fava.
 
-Lists the transactions that a git branch changes relative to ``origin/main``
-in the ledger's beancount repository, shows each transaction's source
-documents inline, and lets the user approve or comment on each one.
+Lists everything a git branch changes relative to ``origin/main``
+in the ledger's beancount repository: every changed beancount
+directive (transactions, balance assertions, and any other dated
+blocks) and every other changed file each get a review card, with
+source documents shown inline, and the user can approve or comment
+on each one.
 Review state (approvals and comments) is stored as JSON outside the
 repository, in ``~/.branch-review/<branch>.json``. Per-item notes
 written by Muse (a link to where the receipt can be fetched, and
@@ -50,6 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from typing import Any
 
 HEADER_RE = re.compile(r'^(\S+) [!*] "([^"]*)" "([^"]*)"')
+TXN_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+[!*]\s")
 DOC_RE = re.compile(
     r'^\s*(?:doc-\d+|document-\d+|document-s\d*|document):\s+"([^"]+)"',
     re.M,
@@ -64,14 +68,31 @@ MIMETYPES = {
 
 
 def _blocks(text: str) -> list[str]:
-    """Split beancount file text into date-led directive blocks."""
+    """Split beancount file text into date-led directive blocks.
+
+    Chunks are separated by blank lines. A chunk holding a single
+    directive is returned exactly as written, so existing block text
+    (and the review keys derived from it) never changes. A chunk
+    holding several directives with no blank lines between them --
+    the balance assertions grouped inside a ;#region block are the
+    common case -- is split at each date-led line, so every directive
+    becomes its own block; lines before the first directive of such
+    a chunk (e.g. the ;#region marker itself) are dropped.
+    """
     out = []
-    for block in re.split(r"\n\s*\n", text.strip("\n")):
-        if not block.strip():
+    for chunk in re.split(r"\n\s*\n", text.strip("\n")):
+        if not chunk.strip():
             continue
-        first = block.splitlines()[0].strip()
-        if re.match(r"^\d{4}-\d{2}-\d{2}\b", first):
-            out.append(block)
+        current: list[str] = []
+        for line in chunk.splitlines():
+            if re.match(r"^\d{4}-\d{2}-\d{2}\b", line):
+                if current:
+                    out.append("\n".join(current))
+                current = [line]
+            elif current:
+                current.append(line)
+        if current:
+            out.append("\n".join(current))
     return out
 
 
@@ -89,7 +110,7 @@ def _date_narr_key(block: str) -> tuple[str, str | None] | None:
 
 
 class BranchReview(FavaExtensionBase):
-    """Review the changed transactions on a git branch."""
+    """Review everything a git branch changes."""
 
     report_title = "Branch Review"
 
@@ -159,7 +180,13 @@ class BranchReview(FavaExtensionBase):
         return (same or cands)[0]
 
     def review_items(self, branch: str) -> list[dict[str, Any]]:
-        """Transactions added or modified on branch vs origin/main."""
+        """All changes on branch vs origin/main, as review items.
+
+        Bean files contribute one item per added/modified directive
+        block (transactions and every other dated directive, e.g.
+        balance assertions); every other changed file contributes
+        one item of its own (see :meth:`_file_items`).
+        """
         head = self._git("rev-parse", branch).strip()
         cache = getattr(self, "_items_cache", None)
         if cache is None:
@@ -181,7 +208,9 @@ class BranchReview(FavaExtensionBase):
         # blocks this branch never touched would otherwise show up here
         # as phantom changes (in reverse).
         base = self._git("merge-base", "origin/main", branch).strip()
+        bean_with_items: set[str] = set()
         for path in sorted(changed):
+            count_before = len(items)
             bookfile = path.rsplit("/", 1)[-1].replace(".bean", "")
             book = bookfile[:2]
             old_blocks = _blocks(self._git("show", f"{base}:{path}"))
@@ -227,10 +256,7 @@ class BranchReview(FavaExtensionBase):
                     modified.add(idx)
 
             for idx, block in enumerate(added):
-                header = HEADER_RE.match(block.splitlines()[0].strip())
-                date, payee, narration = (
-                    header.groups() if header else (block.splitlines()[0], "", "")
-                )
+                first = block.splitlines()[0].strip()
                 docs = []
                 for value in DOC_RE.findall(block):
                     resolved = self._resolve_doc(value, book, by_base)
@@ -244,10 +270,31 @@ class BranchReview(FavaExtensionBase):
                                 "is_image": suffix in (".jpg", ".jpeg", ".png"),
                             }
                         )
-                key_src = f"{bookfile}|{date}|{payee}|{narration}|{block}"
+                if TXN_RE.match(first):
+                    # Transactions keep the historical item key:
+                    # review state and annotations are keyed by it.
+                    header = HEADER_RE.match(first)
+                    date, payee, narration = (
+                        header.groups()
+                        if header
+                        else (block.splitlines()[0], "", "")
+                    )
+                    key_src = f"{bookfile}|{date}|{payee}|{narration}|{block}"
+                    key = hashlib.sha1(key_src.encode()).hexdigest()[:12]
+                else:
+                    # Any other dated directive (balance assertions
+                    # are the common case): keyed by the block alone,
+                    # a formula that cannot collide with the
+                    # transaction keys above.
+                    date_match = re.match(r"^(\d{4}-\d{2}-\d{2})\b", first)
+                    date = date_match.group(1) if date_match else first
+                    payee = narration = ""
+                    key = hashlib.sha1(
+                        f"{bookfile}|{block}".encode()
+                    ).hexdigest()[:12]
                 items.append(
                     {
-                        "key": hashlib.sha1(key_src.encode()).hexdigest()[:12],
+                        "key": key,
                         "book": bookfile,
                         "kind": "Modified" if idx in modified else "Added",
                         "date": date,
@@ -265,10 +312,94 @@ class BranchReview(FavaExtensionBase):
                         "docs": docs,
                     }
                 )
+            if len(items) > count_before:
+                bean_with_items.add(path)
+
+        items.extend(self._file_items(branch, base, bean_with_items))
 
         cache["key"] = (branch, head)
         cache["items"] = items
         return items
+
+    def _file_items(
+        self, branch: str, base: str, bean_with_items: set[str]
+    ) -> list[dict[str, Any]]:
+        """One review item per changed file not covered by bean blocks.
+
+        Covers every non-bean change on the branch vs the merge-base
+        (documents under ``f/``, scripts, any other file), plus bean
+        files whose change produced no block items (e.g. only an
+        option line changed, or the file was deleted), so that any
+        change to any file shows up in the review. Files under ``f/``
+        are served through the same document mechanism as transaction
+        documents; other files link to their raw version on Gitea
+        (the merge-base version for deleted files, which no longer
+        exist at the branch head).
+        """
+        gitea = self._gitea()
+        head = self._git("rev-parse", branch).strip()
+        out: list[dict[str, Any]] = []
+        diff = self._git("diff", "--name-status", base, branch)
+        for line in diff.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status = parts[0]
+            old_path = None
+            if status.startswith("R") and len(parts) >= 3:
+                old_path, path = parts[1], parts[2]
+                kind = "Renamed"
+            else:
+                path = parts[1]
+                kind = {
+                    "A": "Added",
+                    "M": "Modified",
+                    "D": "Deleted",
+                }.get(status[:1], "Modified")
+            is_bean = path.startswith("b/") and path.endswith(".bean")
+            if is_bean and path in bean_with_items:
+                continue  # its blocks are already review items
+            docs: list[dict[str, Any]] = []
+            file_url = ""
+            if kind != "Deleted" and path.startswith("f/"):
+                suffix = Path(path).suffix.lower()
+                docs.append(
+                    {
+                        "path": path,
+                        "name": path.rsplit("/", 1)[-1],
+                        "is_pdf": suffix == ".pdf",
+                        "is_image": suffix in (".jpg", ".jpeg", ".png"),
+                    }
+                )
+            if gitea:
+                base_url, repo, _token = gitea
+                if kind == "Deleted":
+                    file_url = f"{base_url}/{repo}/raw/commit/{base}/{path}"
+                elif not docs:
+                    file_url = f"{base_url}/{repo}/raw/commit/{head}/{path}"
+            out.append(
+                {
+                    "key": hashlib.sha1(
+                        f"file|{path}".encode()
+                    ).hexdigest()[:12],
+                    "book": path,
+                    "kind": kind,
+                    "date": "",
+                    "payee": "",
+                    "narration": "",
+                    "has_question": False,
+                    "html": (
+                        Markup(escape(f"Renamed from {old_path}"))
+                        if old_path
+                        else ""
+                    ),
+                    "docs": docs,
+                    "file_url": file_url,
+                    "is_file": True,
+                }
+            )
+        out.sort(key=lambda item: item["book"])
+        return out
 
     def review_data(self, requested: str | None) -> dict[str, Any]:
         """Everything the report template needs."""
