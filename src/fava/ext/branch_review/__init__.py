@@ -173,10 +173,15 @@ class BranchReview(FavaExtensionBase):
         changed = self._git(
             "diff", "--name-only", f"origin/main...{branch}", "--", "b/*.bean",
         ).split()
+        # Compare block contents against the merge-base, not current
+        # origin/main: once other work merges, main's newer versions of
+        # blocks this branch never touched would otherwise show up here
+        # as phantom changes (in reverse).
+        base = self._git("merge-base", "origin/main", branch).strip()
         for path in sorted(changed):
             bookfile = path.rsplit("/", 1)[-1].replace(".bean", "")
             book = bookfile[:2]
-            old_blocks = _blocks(self._git("show", f"origin/main:{path}"))
+            old_blocks = _blocks(self._git("show", f"{base}:{path}"))
             new_blocks = _blocks(self._git("show", f"{branch}:{path}"))
 
             old_set: dict[str, int] = {}
