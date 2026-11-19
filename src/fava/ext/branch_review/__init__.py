@@ -5,7 +5,11 @@ in the ledger's beancount repository: every changed beancount
 directive (transactions, balance assertions, and any other dated
 blocks) and every other changed file each get a review card, with
 source documents shown inline, and the user can approve or comment
-on each one. A file's card also lists the beancount entries that
+on each one. Dated blocks inside a ``;#region`` ... ``;#endregion``
+block (the balance-assertion groups at the top of a file) are the
+one exception: a changed region is reviewed as a single card
+showing the whole region in context, with only the documents of
+the assertions that actually changed attached. A file's card also lists the beancount entries that
 reference the file, so a document changed on its own still shows
 the entries it belongs to.
 Review state (approvals and comments) is stored as JSON outside the
@@ -96,6 +100,99 @@ def _blocks(text: str) -> list[str]:
         if current:
             out.append("\n".join(current))
     return out
+
+
+def _segments(text: str) -> list[tuple[str | None, str]]:
+    """Split beancount file text into region and non-region segments.
+
+    A region runs from a ``;#region`` line through the matching
+    ``;#endregion`` line (nested regions count depth); its segment
+    is keyed by the region's heading line, stripped. Everything
+    else is returned as non-region segments keyed by None. Segments
+    come back in file order, and joining a side's segment texts
+    with newlines reproduces that side's text minus the region
+    segments (for the non-region view) exactly.
+    """
+    segments: list[tuple[str | None, str]] = []
+    buf: list[str] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^;#region(\s|$)", line):
+            if buf:
+                segments.append((None, "\n".join(buf)))
+                buf = []
+            heading = line.strip()
+            region = [line]
+            depth = 1
+            i += 1
+            while i < len(lines) and depth:
+                region.append(lines[i])
+                if re.match(r"^;#region(\s|$)", lines[i]):
+                    depth += 1
+                elif re.match(r"^;#endregion(\s|$)", lines[i]):
+                    depth -= 1
+                i += 1
+            segments.append((heading, "\n".join(region)))
+        else:
+            buf.append(line)
+            i += 1
+    if buf:
+        segments.append((None, "\n".join(buf)))
+    return segments
+
+
+def _added_blocks(
+    old_blocks: list[str], new_blocks: list[str]
+) -> tuple[list[str], set[int], list[str]]:
+    """Diff two block lists as multisets.
+
+    Returns ``(added, modified, removed)``: the blocks present in
+    ``new_blocks`` but not matched in ``old_blocks``, the indexes
+    within ``added`` that pair with a removed block (same header
+    line, else same date and narration) and so count as modified
+    rather than new, and the blocks that disappeared.
+    """
+    old_set: dict[str, int] = {}
+    for block in old_blocks:
+        old_set[block] = old_set.get(block, 0) + 1
+    added = []
+    for block in new_blocks:
+        if old_set.get(block, 0) > 0:
+            old_set[block] -= 1
+        else:
+            added.append(block)
+    new_set: dict[str, int] = {}
+    for block in new_blocks:
+        new_set[block] = new_set.get(block, 0) + 1
+    removed = []
+    for block in old_blocks:
+        if new_set.get(block, 0) > 0:
+            new_set[block] -= 1
+        else:
+            removed.append(block)
+
+    # pair added/removed as Modified: same header, else date+narration
+    modified: set[int] = set()
+    used_removed: set[int] = set()
+    for idx, block in enumerate(added):
+        pair = None
+        for i, old in enumerate(removed):
+            if i not in used_removed and _header_key(old) == _header_key(block):
+                pair = i
+                break
+        if pair is None:
+            key = _date_narr_key(block)
+            if key and key[1] is not None:
+                for i, old in enumerate(removed):
+                    if i not in used_removed and _date_narr_key(old) == key:
+                        pair = i
+                        break
+        if pair is not None:
+            used_removed.add(pair)
+            modified.add(idx)
+    return added, modified, removed
 
 
 def _block_html(block: str) -> Markup:
@@ -193,13 +290,94 @@ class BranchReview(FavaExtensionBase):
         same = [c for c in cands if c.startswith(f"f/{book}/")]
         return (same or cands)[0]
 
+    def _block_docs(
+        self, blocks: list[str], book: str, by_base: dict
+    ) -> list[dict[str, Any]]:
+        """Resolved source documents of the given blocks.
+
+        Deduped by path, first-seen order: a document shared by
+        several blocks (a statement behind a whole month of balance
+        assertions, say) is attached only once.
+        """
+        docs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for block in blocks:
+            for value in DOC_RE.findall(block):
+                resolved = self._resolve_doc(value, book, by_base)
+                if resolved and resolved not in seen:
+                    seen.add(resolved)
+                    suffix = Path(resolved).suffix.lower()
+                    docs.append(
+                        {
+                            "path": resolved,
+                            "name": resolved.rsplit("/", 1)[-1],
+                            "is_pdf": suffix == ".pdf",
+                            "is_image": suffix in (".jpg", ".jpeg", ".png"),
+                        }
+                    )
+        return docs
+
+    def _region_item(
+        self,
+        bookfile: str,
+        book: str,
+        heading: str,
+        new_text: str,
+        old_text: str | None,
+        by_base: dict,
+    ) -> dict[str, Any] | None:
+        """One review item for a whole ``;#region`` block, or None.
+
+        Emitted when the region is new on the branch or any dated
+        block inside it was added, removed, or modified; a region
+        that exists only at the merge-base is not an item (removals
+        are not reviewed), and neither is an unchanged region. The
+        card shows the region's full branch-side text so the group
+        is reviewed in context; only the documents of the blocks
+        that actually changed are attached.
+        """
+        if old_text is None:
+            kind = "Added"
+            changed = _blocks(new_text)
+        else:
+            if old_text == new_text:
+                return None
+            added, _modified, removed = _added_blocks(
+                _blocks(old_text), _blocks(new_text)
+            )
+            if not added and not removed:
+                return None
+            kind = "Modified"
+            changed = added
+        return {
+            "key": hashlib.sha1(
+                f"{bookfile}|{heading}".encode()
+            ).hexdigest()[:12],
+            "book": bookfile,
+            "kind": kind,
+            "date": "",
+            "payee": "",
+            "narration": "",
+            "heading": heading,
+            "is_region": True,
+            "block": new_text,
+            "has_question": any(
+                "QUESTION" in line for line in new_text.splitlines()
+            ),
+            "html": _block_html(new_text),
+            "docs": self._block_docs(changed, book, by_base),
+        }
+
     def review_items(self, branch: str) -> list[dict[str, Any]]:
         """All changes on branch vs origin/main, as review items.
 
         Bean files contribute one item per added/modified directive
         block (transactions and every other dated directive, e.g.
-        balance assertions); every other changed file contributes
-        one item of its own (see :meth:`_file_items`).
+        balance assertions) -- except blocks inside a ``;#region``
+        ... ``;#endregion`` block, which contribute one item per
+        changed region instead (see :meth:`_region_item`); every
+        other changed file contributes one item of its own (see
+        :meth:`_file_items`).
         """
         head = self._git("rev-parse", branch).strip()
         cache = getattr(self, "_items_cache", None)
@@ -227,48 +405,24 @@ class BranchReview(FavaExtensionBase):
             count_before = len(items)
             bookfile = path.rsplit("/", 1)[-1].replace(".bean", "")
             book = bookfile[:2]
-            old_blocks = _blocks(self._git("show", f"{base}:{path}"))
-            new_blocks = _blocks(self._git("show", f"{branch}:{path}"))
+            old_segments = _segments(self._git("show", f"{base}:{path}"))
+            new_segments = _segments(self._git("show", f"{branch}:{path}"))
+            old_regions: dict[str, str] = {}
+            for heading, seg_text in old_segments:
+                if heading is not None:
+                    old_regions.setdefault(heading, seg_text)
+            # Dated blocks outside any region keep the historical
+            # per-block items and keys; blocks inside a region are
+            # grouped into one item per changed region below.
+            old_blocks = _blocks(
+                "\n".join(t for h, t in old_segments if h is None)
+            )
+            new_blocks = _blocks(
+                "\n".join(t for h, t in new_segments if h is None)
+            )
+            added, modified, _removed = _added_blocks(old_blocks, new_blocks)
 
-            old_set: dict[str, int] = {}
-            for block in old_blocks:
-                old_set[block] = old_set.get(block, 0) + 1
-            added = []
-            for block in new_blocks:
-                if old_set.get(block, 0) > 0:
-                    old_set[block] -= 1
-                else:
-                    added.append(block)
-            new_set: dict[str, int] = {}
-            for block in new_blocks:
-                new_set[block] = new_set.get(block, 0) + 1
-            removed = []
-            for block in old_blocks:
-                if new_set.get(block, 0) > 0:
-                    new_set[block] -= 1
-                else:
-                    removed.append(block)
-
-            # pair added/removed as Modified: same header, else date+narration
-            modified: set[int] = set()
-            used_removed: set[int] = set()
-            for idx, block in enumerate(added):
-                pair = None
-                for i, old in enumerate(removed):
-                    if i not in used_removed and _header_key(old) == _header_key(block):
-                        pair = i
-                        break
-                if pair is None:
-                    key = _date_narr_key(block)
-                    if key and key[1] is not None:
-                        for i, old in enumerate(removed):
-                            if i not in used_removed and _date_narr_key(old) == key:
-                                pair = i
-                                break
-                if pair is not None:
-                    used_removed.add(pair)
-                    modified.add(idx)
-
+            pending: list[tuple[str, dict[str, Any]]] = []
             for idx, block in enumerate(added):
                 first = block.splitlines()[0].strip()
                 docs = []
@@ -297,28 +451,63 @@ class BranchReview(FavaExtensionBase):
                     key = hashlib.sha1(key_src.encode()).hexdigest()[:12]
                 else:
                     # Any other dated directive (balance assertions
-                    # are the common case): keyed by the block alone,
-                    # a formula that cannot collide with the
-                    # transaction keys above.
+                    # outside a region are the common case): keyed
+                    # by the block alone, a formula that cannot
+                    # collide with the transaction keys above.
                     date_match = re.match(r"^(\d{4}-\d{2}-\d{2})\b", first)
                     date = date_match.group(1) if date_match else first
                     payee = narration = ""
                     key = hashlib.sha1(
                         f"{bookfile}|{block}".encode()
                     ).hexdigest()[:12]
-                items.append(
-                    {
-                        "key": key,
-                        "book": bookfile,
-                        "kind": "Modified" if idx in modified else "Added",
-                        "date": date,
-                        "payee": payee,
-                        "narration": narration,
-                        "has_question": any("QUESTION" in line for line in block.splitlines()),
-                        "html": _block_html(block),
-                        "docs": docs,
-                    }
+                pending.append(
+                    (
+                        block,
+                        {
+                            "key": key,
+                            "book": bookfile,
+                            "kind": "Modified" if idx in modified else "Added",
+                            "date": date,
+                            "payee": payee,
+                            "narration": narration,
+                            "has_question": any("QUESTION" in line for line in block.splitlines()),
+                            "html": _block_html(block),
+                            "docs": docs,
+                        },
+                    )
                 )
+
+            region_items: dict[str, dict[str, Any]] = {}
+            for heading, seg_text in new_segments:
+                if heading is None or heading in region_items:
+                    continue
+                region_item = self._region_item(
+                    bookfile,
+                    book,
+                    heading,
+                    seg_text,
+                    old_regions.get(heading),
+                    by_base,
+                )
+                if region_item is not None:
+                    region_items[heading] = region_item
+
+            # Assemble the file's items in file order: walk the
+            # branch-side segments, emitting each region's item at
+            # the region's position and each block item at its
+            # block's position.
+            for heading, seg_text in new_segments:
+                if heading is not None:
+                    if heading in region_items:
+                        items.append(region_items.pop(heading))
+                else:
+                    for block in _blocks(seg_text):
+                        if pending and pending[0][0] == block:
+                            items.append(pending.pop(0)[1])
+            # Safety net: a block item the segment walk missed
+            # (possible only if a chunk spanned a segment boundary)
+            # still shows up, at the end of the file's items.
+            items.extend(item for _block, item in pending)
             if len(items) > count_before:
                 bean_with_items.add(path)
 
@@ -669,18 +858,25 @@ class BranchReview(FavaExtensionBase):
                 counts["needs-work"] += 1
             else:
                 counts["unchecked"] += 1
-            snapshot.append(
-                {
-                    "key": item["key"],
-                    "book": item["book"],
-                    "kind": item["kind"],
-                    "date": item["date"],
-                    "payee": item["payee"],
-                    "narration": item["narration"],
-                    "status": status,
-                    "comment": entry.get("comment", ""),
-                }
-            )
+            snap = {
+                "key": item["key"],
+                "book": item["book"],
+                "kind": item["kind"],
+                "date": item["date"],
+                "payee": item["payee"],
+                "narration": item["narration"],
+                "status": status,
+                "comment": entry.get("comment", ""),
+            }
+            if item.get("is_region"):
+                # A region item stands for the whole ;#region block:
+                # the snapshot carries its heading and full text so
+                # the landing step can replace or insert the entire
+                # region on main.
+                snap["kind"] = "region"
+                snap["heading"] = item["heading"]
+                snap["block"] = item["block"]
+            snapshot.append(snap)
         submitted_at = datetime.now().astimezone().isoformat(timespec="seconds")
         submission = {
             "id": hashlib.sha1(

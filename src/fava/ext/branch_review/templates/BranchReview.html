@@ -79,7 +79,7 @@
 {% for item in data["items"] %}
 <article class="br-card br-collapsed" data-key="{{ item.key }}">
   <div class="br-head">
-    <div class="br-title">{{ loop.index }}. {{ item.kind }} in {{ item.book }}</div>
+    <div class="br-title">{{ loop.index }}. {{ item.kind }} in {{ item.book }}{% if item.get("heading") %}: {{ item.heading }}{% endif %}</div>
     <div class="br-controls">
       <div class="br-status-group">
         <button type="button" class="br-state-btn" data-state="none" title="Unchecked" aria-label="Unchecked"><span class="br-emoji">⚪&#xFE0E;</span><span class="br-state-label">Unchecked</span></button>
