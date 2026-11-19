@@ -170,19 +170,9 @@ export default {
     // expand-then-collapse shuffle on page load.
 
     // "Submit to Muse": snapshot the review for Muse to process.
-    // Warn first if anything is still unchecked.
     const submitBtn = document.getElementById("br-submit");
     const submitStatus = document.getElementById("br-submit-status");
     submitBtn?.addEventListener("click", () => {
-      const unchecked = cards.filter((c) => getStatus(c) === "none").length;
-      if (
-        unchecked > 0 &&
-        !window.confirm(
-          `${unchecked} item(s) are still unchecked. Submit anyway?`,
-        )
-      ) {
-        return;
-      }
       if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
       void ctx.api.post("submit", { branch }).then((res) => {
         if (submitBtn instanceof HTMLButtonElement) {
