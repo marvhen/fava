@@ -315,22 +315,34 @@ class BranchReview(FavaExtensionBase):
             if len(items) > count_before:
                 bean_with_items.add(path)
 
-        items.extend(self._file_items(branch, base, bean_with_items))
+        # A file a shown item already displays as one of its source
+        # documents does not need a card of its own.
+        referenced = {doc["path"] for item in items for doc in item["docs"]}
+        items.extend(
+            self._file_items(branch, base, bean_with_items, referenced)
+        )
 
         cache["key"] = (branch, head)
         cache["items"] = items
         return items
 
     def _file_items(
-        self, branch: str, base: str, bean_with_items: set[str]
+        self,
+        branch: str,
+        base: str,
+        bean_with_items: set[str],
+        referenced: set[str],
     ) -> list[dict[str, Any]]:
-        """One review item per changed file not covered by bean blocks.
+        """One review item per changed file not covered by bean items.
 
         Covers every non-bean change on the branch vs the merge-base
         (documents under ``f/``, scripts, any other file), plus bean
         files whose change produced no block items (e.g. only an
         option line changed, or the file was deleted), so that any
-        change to any file shows up in the review. Files under ``f/``
+        change to any file shows up in the review. Files in
+        ``referenced`` -- the resolved document paths of the bean
+        items above -- are skipped: those items already display them.
+        Files under ``f/``
         are served through the same document mechanism as transaction
         documents; other files link to their raw version on Gitea
         (the merge-base version for deleted files, which no longer
@@ -359,6 +371,8 @@ class BranchReview(FavaExtensionBase):
             is_bean = path.startswith("b/") and path.endswith(".bean")
             if is_bean and path in bean_with_items:
                 continue  # its blocks are already review items
+            if path in referenced:
+                continue  # already shown as a document on a bean item
             docs: list[dict[str, Any]] = []
             file_url = ""
             if kind != "Deleted" and path.startswith("f/"):
