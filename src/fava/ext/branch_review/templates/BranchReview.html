@@ -31,6 +31,7 @@
   .br-doc embed { display: block; width: 100%; height: 480px; border: none; }
   .br-doc img { display: block; max-width: 100%; border: none; }
   .br-docname { font-size: 13px; word-break: break-all; margin: 0 10px; }
+  .br-refs { margin: 0 10px 10px; }
   .br-card.br-needs .br-head { background: #f8d7da; }
   .br-status-group { display: flex; width: 100%; }
   .br-state-label { display: none; margin-left: 6px; font-size: 14px; }
@@ -115,6 +116,19 @@
     {% if item.get("file_url") %}
     <div class="br-doc">
       <div class="br-docname"><a class="br-doclink" href="{{ item.get("file_url") }}" target="_blank" rel="noopener">{{ item.book }}</a></div>
+    </div>
+    {% endif %}
+    {% if item.get("is_file") %}
+    <div class="br-refs">
+      <div><strong>Referenced by</strong></div>
+      {% if item.references %}
+      {% for ref in item.references %}
+      <div class="br-meta">{{ ref.book }}</div>
+      <pre>{{ ref.html }}</pre>
+      {% endfor %}
+      {% else %}
+      <div>No entries reference this file.</div>
+      {% endif %}
     </div>
     {% endif %}
    </div>

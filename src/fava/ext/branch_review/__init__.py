@@ -5,7 +5,9 @@ in the ledger's beancount repository: every changed beancount
 directive (transactions, balance assertions, and any other dated
 blocks) and every other changed file each get a review card, with
 source documents shown inline, and the user can approve or comment
-on each one.
+on each one. A file's card also lists the beancount entries that
+reference the file, so a document changed on its own still shows
+the entries it belongs to.
 Review state (approvals and comments) is stored as JSON outside the
 repository, in ``~/.branch-review/<branch>.json``. Per-item notes
 written by Muse (a link to where the receipt can be fetched, and
@@ -94,6 +96,18 @@ def _blocks(text: str) -> list[str]:
         if current:
             out.append("\n".join(current))
     return out
+
+
+def _block_html(block: str) -> Markup:
+    """Render block text for a card, highlighting QUESTION lines."""
+    return Markup(
+        "\n".join(
+            f'<span class="br-q">{escape(line)}</span>'
+            if "QUESTION" in line
+            else str(escape(line))
+            for line in block.splitlines()
+        )
+    )
 
 
 def _header_key(block: str) -> str:
@@ -301,14 +315,7 @@ class BranchReview(FavaExtensionBase):
                         "payee": payee,
                         "narration": narration,
                         "has_question": any("QUESTION" in line for line in block.splitlines()),
-                        "html": Markup(
-                            "\n".join(
-                                f'<span class="br-q">{escape(line)}</span>'
-                                if "QUESTION" in line
-                                else str(escape(line))
-                                for line in block.splitlines()
-                            )
-                        ),
+                        "html": _block_html(block),
                         "docs": docs,
                     }
                 )
@@ -319,12 +326,49 @@ class BranchReview(FavaExtensionBase):
         # documents does not need a card of its own.
         referenced = {doc["path"] for item in items for doc in item["docs"]}
         items.extend(
-            self._file_items(branch, base, bean_with_items, referenced)
+            self._file_items(
+                branch, base, bean_with_items, referenced, tree, by_base
+            )
         )
 
         cache["key"] = (branch, head)
         cache["items"] = items
         return items
+
+    def _reference_index(
+        self, branch: str, tree: list[str], by_base: dict
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Map every document path to the bean blocks that reference it.
+
+        Parses every bean file at the branch head, not just the ones
+        the branch changed, so a file card can list the entries that
+        point at the file -- including entries the branch itself did
+        not touch. Keys are the resolved repo-relative paths produced
+        by :meth:`_resolve_doc`, the same paths bean items carry in
+        their ``docs`` lists; each value holds the referencing blocks
+        as ``{"book", "text", "html"}`` dicts.
+        """
+        index: dict[str, list[dict[str, Any]]] = {}
+        for path in sorted(tree):
+            if not (path.startswith("b/") and path.endswith(".bean")):
+                continue
+            bookfile = path.rsplit("/", 1)[-1].replace(".bean", "")
+            book = bookfile[:2]
+            for block in _blocks(self._git("show", f"{branch}:{path}")):
+                targets = {
+                    self._resolve_doc(value, book, by_base)
+                    for value in DOC_RE.findall(block)
+                }
+                for target in targets:
+                    if target:
+                        index.setdefault(target, []).append(
+                            {
+                                "book": bookfile,
+                                "text": block,
+                                "html": _block_html(block),
+                            }
+                        )
+        return index
 
     def _file_items(
         self,
@@ -332,6 +376,8 @@ class BranchReview(FavaExtensionBase):
         base: str,
         bean_with_items: set[str],
         referenced: set[str],
+        tree: list[str],
+        by_base: dict,
     ) -> list[dict[str, Any]]:
         """One review item per changed file not covered by bean items.
 
@@ -346,10 +392,13 @@ class BranchReview(FavaExtensionBase):
         are served through the same document mechanism as transaction
         documents; other files link to their raw version on Gitea
         (the merge-base version for deleted files, which no longer
-        exist at the branch head).
+        exist at the branch head). Each item also lists the bean
+        blocks that reference the file (see :meth:`_reference_index`),
+        looked up under the new path and, for renames, the old one.
         """
         gitea = self._gitea()
         head = self._git("rev-parse", branch).strip()
+        ref_index: dict[str, list[dict[str, Any]]] | None = None
         out: list[dict[str, Any]] = []
         diff = self._git("diff", "--name-status", base, branch)
         for line in diff.splitlines():
@@ -391,6 +440,11 @@ class BranchReview(FavaExtensionBase):
                     file_url = f"{base_url}/{repo}/raw/commit/{base}/{path}"
                 elif not docs:
                     file_url = f"{base_url}/{repo}/raw/commit/{head}/{path}"
+            if ref_index is None:
+                ref_index = self._reference_index(branch, tree, by_base)
+            references = list(ref_index.get(path, []))
+            if old_path:
+                references += ref_index.get(old_path, [])
             out.append(
                 {
                     "key": hashlib.sha1(
@@ -410,6 +464,7 @@ class BranchReview(FavaExtensionBase):
                     "docs": docs,
                     "file_url": file_url,
                     "is_file": True,
+                    "references": references,
                 }
             )
         out.sort(key=lambda item: item["book"])
