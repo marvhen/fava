@@ -49,6 +49,8 @@
   .br-state-btn.br-active[data-state="approved"] { background: springgreen; }
   .br-emoji { filter: saturate(1.5) brightness(1.1); }
   .br-comment { display: block; width: calc(100% - 16px); box-sizing: border-box; margin: 8px; resize: vertical; }
+  .br-submitline { text-align: right; margin: 6px 0 0; }
+  #br-submit { padding: 6px 14px; font-size: 15px; cursor: pointer; }
   .br-settings-body { display: grid; gap: 8px; margin: 0 10px 10px; }
   .br-settings-body label { display: flex; align-items: center; gap: 8px; }
   .br-settings-body input { width: 18px; height: 18px; }
@@ -69,6 +71,10 @@
 {% if data["pr"] %}
 <p class="br-prline"><a class="br-doclink" href="{{ data['pr']['url'] }}" target="_blank" rel="noopener">PR{{ data['pr']['number'] }}</a></p>
 {% endif %}
+<p class="br-submitline">
+  <button type="button" id="br-submit">Submit to Muse</button>
+  <span id="br-submit-status" class="br-meta">{% if data["submission"] %}Submitted {{ data["submission"]["submitted_at"] }} — waiting for Muse to pick it up{% endif %}</span>
+</p>
 
 
 {% for item in data["items"] %}

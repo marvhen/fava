@@ -169,6 +169,34 @@ export default {
     // Cards are rendered collapsed by the server, so there is no
     // expand-then-collapse shuffle on page load.
 
+    // "Submit to Muse": snapshot the review for Muse to process.
+    // Warn first if anything is still unchecked.
+    const submitBtn = document.getElementById("br-submit");
+    const submitStatus = document.getElementById("br-submit-status");
+    submitBtn?.addEventListener("click", () => {
+      const unchecked = cards.filter((c) => getStatus(c) === "none").length;
+      if (
+        unchecked > 0 &&
+        !window.confirm(
+          `${unchecked} item(s) are still unchecked. Submit anyway?`,
+        )
+      ) {
+        return;
+      }
+      if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
+      void ctx.api.post("submit", { branch }).then((res) => {
+        if (submitBtn instanceof HTMLButtonElement) {
+          submitBtn.disabled = false;
+        }
+        if (submitStatus) {
+          submitStatus.textContent =
+            res && res.ok
+              ? `Submitted ${res.submitted_at} — Muse will pick it up shortly`
+              : "Submit failed — try again";
+        }
+      });
+    });
+
     void ctx.api.get("state", { branch }).then((state) => {
       if (state && typeof state === "object") {
         for (const card of cards) {

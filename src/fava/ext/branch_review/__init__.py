@@ -8,7 +8,9 @@ repository, in ``~/.branch-review/<branch>.json``. Per-item notes
 written by Muse (a link to where the receipt can be fetched, and
 questions that should not clutter the transaction text) live in a
 sibling file, ``~/.branch-review/<branch>.annotations.json``, keyed
-by item key. When the repository has a ``gitea-push`` remote, the
+by item key. The page's "Submit to Muse" button writes a snapshot
+of the review to ``~/.branch-review/<branch>.submitted.json`` for
+Muse to process. When the repository has a ``gitea-push`` remote, the
 branch's pull-request number is looked up through the Gitea API so
 the page can link straight to the PR.
 
@@ -31,6 +33,7 @@ import re
 import subprocess
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -279,6 +282,7 @@ class BranchReview(FavaExtensionBase):
                 "head": "",
                 "pr": None,
                 "branch_prs": {},
+                "submission": None,
             }
         items = self.review_items(branch)
         annotations = self._load_annotations(branch)
@@ -300,6 +304,7 @@ class BranchReview(FavaExtensionBase):
                 if number
                 else None
             ),
+            "submission": self._load_submission(branch),
         }
 
     # ------------------------------------------------------------------
@@ -414,6 +419,84 @@ class BranchReview(FavaExtensionBase):
         state[key] = entry
         self._state_file(branch).write_text(json.dumps(state, indent=1))
         return jsonify({"ok": True})
+
+    # ------------------------------------------------------------------
+    # submissions: Marvin signals Muse to process a finished review
+    # ------------------------------------------------------------------
+    def _submitted_file(self, branch: str) -> Path:
+        folder = Path.home() / ".branch-review"
+        folder.mkdir(exist_ok=True)
+        return folder / (branch.replace("/", "_") + ".submitted.json")
+
+    def _load_submission(self, branch: str) -> dict[str, Any] | None:
+        """The pending submission for a branch, if one is waiting."""
+        sub_file = self._submitted_file(branch)
+        if sub_file.exists():
+            try:
+                data = json.loads(sub_file.read_text())
+                if isinstance(data, dict):
+                    return data
+            except (ValueError, OSError):
+                pass
+        return None
+
+    @extension_endpoint("submit", ["POST"])
+    def submit(self) -> Response:
+        """POST endpoint: snapshot the review and flag it for Muse.
+
+        Writes ``~/.branch-review/<branch>.submitted.json`` with every
+        item's status and comment as of now. A watcher on Muse's side
+        picks the file up, processes the needs-work items, and archives
+        the file; while it sits there, the page shows the submission as
+        pending. Submitting again replaces the snapshot.
+        """
+        data = request.get_json(force=True)
+        branch = str(data.get("branch", ""))
+        if branch not in self.branches():
+            return jsonify({"ok": False})
+        items = self.review_items(branch)
+        state = self._load_state(branch)
+        snapshot = []
+        counts = {"approved": 0, "needs-work": 0, "unchecked": 0}
+        for item in items:
+            entry = state.get(item["key"], {})
+            status = entry.get("status") or (
+                "approved" if entry.get("approved") else "none"
+            )
+            if status == "approved":
+                counts["approved"] += 1
+            elif status == "needs-work":
+                counts["needs-work"] += 1
+            else:
+                counts["unchecked"] += 1
+            snapshot.append(
+                {
+                    "key": item["key"],
+                    "book": item["book"],
+                    "kind": item["kind"],
+                    "date": item["date"],
+                    "payee": item["payee"],
+                    "narration": item["narration"],
+                    "status": status,
+                    "comment": entry.get("comment", ""),
+                }
+            )
+        submitted_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        submission = {
+            "id": hashlib.sha1(
+                f"{branch}|{submitted_at}".encode()
+            ).hexdigest()[:12],
+            "branch": branch,
+            "head": self._git("rev-parse", "--short", branch).strip(),
+            "pr": self.pr_map().get(branch),
+            "submitted_at": submitted_at,
+            "counts": counts,
+            "items": snapshot,
+        }
+        self._submitted_file(branch).write_text(json.dumps(submission, indent=1))
+        return jsonify(
+            {"ok": True, "submitted_at": submitted_at, "counts": counts}
+        )
 
     # ------------------------------------------------------------------
     # document serving: file bytes out of the branch's git tree
